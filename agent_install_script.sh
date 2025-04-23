@@ -41,6 +41,6 @@ sudo docker run -d \
   -p 8080:8080 \
   -v /:/host \
   --name backup-agent \
-  phantomfaith4/backup-agent-api:latest
+  phantomfaith/backup-agent-api:latest
   
 echo "Docker container is running on port 8080."
