@@ -35,12 +35,13 @@ sudo docker --version
 echo "Pulling the Docker image..."
 sudo docker pull phantomfaith4/backup-agent-api:latest
 
-# Run the Docker container
-echo "Running the Docker container..."
-sudo docker run -d \
-  -p 8080:8080 \
-  -v /:/host \
-  --name backup-agent \
-  phantomfaith/backup-agent-api:latest
-  
+
+if ! sudo docker ps -q -f name=backup-agent; then
+    # Run the Docker container
+    echo "Running the Docker container..."
+    sudo docker run -d -p 8080:8080 -v /:/host --name backup-agent phantomfaith/backup-agent-api:latest
+else
+    echo "Backup agent is already running."
+fi
+
 echo "Docker container is running on port 8080."
