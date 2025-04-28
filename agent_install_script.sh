@@ -33,7 +33,7 @@ sudo docker --version
 
 # Pull the Docker image from Docker Hub
 echo "Pulling the Docker image..."
-sudo docker pull phantomfaith4/backup-agent-api:latest
+sudo docker pull phantomfaith/backup-agent-api:latest
 
 
 if ! sudo docker ps -q -f name=backup-agent; then
