@@ -2,9 +2,20 @@
 
 LOGFILE="/tmp/install_agent.log"
 
-# Log function to capture output
+# Log function to capture output to both logfile and console
 log() {
-    echo "$(date) - $1" >> $LOGFILE
+    echo "$(date) - $1" | tee -a "$LOGFILE"
+}
+
+# Execute a command and log its output
+run_and_log() {
+    log "$1"
+    shift
+    "$@" >> "$LOGFILE" 2>&1
+    if [ $? -ne 0 ]; then
+        log "Error: Command failed - $*"
+        exit 1
+    fi
 }
 
 log "Starting installation..."
@@ -13,23 +24,14 @@ log "Starting installation..."
 if ! command -v docker &> /dev/null; then
     log "Docker is not installed. Installing Docker..."
 
-    # Update apt and install required dependencies
-    sudo apt-get update >> $LOGFILE 2>&1
-    sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common >> $LOGFILE 2>&1
-
-    # Add Docker's official GPG key
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add - >> $LOGFILE 2>&1
-
-    # Add Docker repository
-    sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" >> $LOGFILE 2>&1
-
-    # Update apt and install Docker CE (Community Edition)
-    sudo apt-get update >> $LOGFILE 2>&1
-    sudo apt-get install -y docker-ce >> $LOGFILE 2>&1
-
-    # Start and enable Docker service
-    sudo systemctl start docker >> $LOGFILE 2>&1
-    sudo systemctl enable docker >> $LOGFILE 2>&1
+    run_and_log "Updating apt..." sudo apt-get update
+    run_and_log "Installing dependencies..." sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+    run_and_log "Adding Docker GPG key..." curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+    run_and_log "Adding Docker repository..." sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+    run_and_log "Updating apt after adding Docker repo..." sudo apt-get update
+    run_and_log "Installing Docker CE..." sudo apt-get install -y docker-ce
+    run_and_log "Starting Docker service..." sudo systemctl start docker
+    run_and_log "Enabling Docker service..." sudo systemctl enable docker
 
     log "Docker installed successfully."
 else
@@ -37,23 +39,23 @@ else
 fi
 
 # Test Docker installation
-log "Testing Docker..."
-sudo docker --version >> $LOGFILE 2>&1
+log "Testing Docker installation..."
+run_and_log "Checking Docker version..." sudo docker --version
 
-# Pull the Docker image from Docker Hub
+# Pull the Docker image
 log "Pulling the Docker image..."
-sudo docker pull phantomfaith/backup-agent-api:latest >> $LOGFILE 2>&1
+run_and_log "Pulling phantomfaith/backup-agent-api..." sudo docker pull phantomfaith/backup-agent-api:latest
 
 # Check if the container is already running
-if ! sudo docker ps -q -f name=backup-agent; then
-    # Run the Docker container with APP_KEY passed as an environment variable
+if ! sudo docker ps -q -f name=backup-agent > /dev/null; then
+    # Run the Docker container
     log "Running the Docker container with APP_KEY..."
-    sudo docker run -d \
+    run_and_log "Starting container..." sudo docker run -d \
         -p 8080:8080 \
         -v /:/host \
         --name backup-agent \
         -e APP_KEY="$APP_KEY" \
-        phantomfaith/backup-agent-api:latest >> $LOGFILE 2>&1
+        phantomfaith/backup-agent-api:latest
 else
     log "Backup agent is already running."
 fi
