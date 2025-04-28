@@ -46,9 +46,14 @@ sudo docker pull phantomfaith/backup-agent-api:latest >> $LOGFILE 2>&1
 
 # Check if the container is already running
 if ! sudo docker ps -q -f name=backup-agent; then
-    # Run the Docker container
-    log "Running the Docker container..."
-    sudo docker run -d -p 8080:8080 -v /:/host --name backup-agent phantomfaith/backup-agent-api:latest >> $LOGFILE 2>&1
+    # Run the Docker container with APP_KEY passed as an environment variable
+    log "Running the Docker container with APP_KEY..."
+    sudo docker run -d \
+        -p 8080:8080 \
+        -v /:/host \
+        --name backup-agent \
+        -e APP_KEY="$APP_KEY" \
+        phantomfaith/backup-agent-api:latest >> $LOGFILE 2>&1
 else
     log "Backup agent is already running."
 fi
