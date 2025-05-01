@@ -42,6 +42,12 @@ fi
 log "Testing Docker installation..."
 run_and_log "Checking Docker version..." sudo docker --version
 
+# Create backup directory on host (Option 2: direct host path)
+HOST_BACKUP_DIR="/var/backup_app/backups"
+log "Ensuring host backup directory exists at $HOST_BACKUP_DIR"
+run_and_log "Creating backup directory..." sudo mkdir -p "$HOST_BACKUP_DIR"
+run_and_log "Setting permissions on backup directory..." sudo chmod 755 "$HOST_BACKUP_DIR"
+
 # Pull the Docker image
 log "Pulling the Docker image..."
 run_and_log "Pulling phantomfaith/backup-agent-api..." sudo docker pull phantomfaith/backup-agent-api:latest
@@ -49,10 +55,10 @@ run_and_log "Pulling phantomfaith/backup-agent-api..." sudo docker pull phantomf
 # Check if the container is already running
 if ! sudo docker ps -q -f name=backup-agent > /dev/null; then
     # Run the Docker container
-    log "Running the Docker container with APP_KEY..."
+    log "Running the Docker container with APP_KEY and host backup mount..."
     run_and_log "Starting container..." sudo docker run -d \
         -p 8080:8080 \
-        -v /:/host \
+        -v /:/host:ro \
         --name backup-agent \
         -e APP_KEY="$APP_KEY" \
         phantomfaith/backup-agent-api:latest
