@@ -60,12 +60,14 @@ if ! sudo docker ps -q -f name=backup-agent > /dev/null; then
     run_and_log "Starting container..." sudo docker run -d \
         -p 8080:8080 \
         -v /:/host:ro \
+        -v /var/backup_app/backups:/host/var/backup_app/backups \
         --name backup-agent \
         -e APP_KEY="$APP_KEY" \
         phantomfaith/backup-agent-api:latest
 else
     log "Backup agent is already running."
 fi
+
 
 log "Docker container is running on port 8080."
 log "Installation complete."
