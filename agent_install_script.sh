@@ -43,6 +43,7 @@ log "Testing Docker installation..."
 run_and_log "Checking Docker version..." sudo docker --version
 
 # Create backup directory on host (Option 2: direct host path)
+# This ensures /var/backup_app/backups exists for mounts at /host/var/backup_app/backups
 HOST_BACKUP_DIR="/var/backup_app/backups"
 log "Ensuring host backup directory exists at $HOST_BACKUP_DIR"
 run_and_log "Creating backup directory..." sudo mkdir -p "$HOST_BACKUP_DIR"
