@@ -113,9 +113,13 @@ server {
 }
 EOF
 
-# Step 7.3: Create a symbolic link to enable Nginx config
-log "Enabling Nginx site configuration..."
-run_and_log "Creating symlink for Nginx configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
+# Step 7.3: Check if symlink already exists before creating it
+if [ ! -L "/etc/nginx/sites-enabled/backup-api" ]; then
+    log "Creating symlink for Nginx configuration..."
+    run_and_log "Creating symlink for Nginx configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
+else
+    log "Symlink for Nginx configuration already exists."
+fi
 
 # Step 7.4: Install Certbot and obtain SSL certificates
 log "Installing Certbot..."
