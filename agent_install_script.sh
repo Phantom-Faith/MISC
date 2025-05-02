@@ -81,6 +81,8 @@ log "Setting up Nginx reverse proxy..."
 run_and_log "Pulling Nginx image..." sudo docker pull nginx:latest
 
 # Step 7.2: Create a Nginx configuration file for the reverse proxy
+NGINX_CONF="/etc/nginx/sites-available/backup-api"
+
 cat <<EOF | sudo tee "$NGINX_CONF"
 server {
     listen 80;
@@ -97,7 +99,7 @@ server {
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
 
-    # Your SSL configuration (could be enhanced)
+    # SSL configuration (could be enhanced)
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384';
 
@@ -112,14 +114,23 @@ server {
 EOF
 
 # Step 7.3: Create a symbolic link to enable Nginx config
-run_and_log "Enabling Nginx site configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
+log "Enabling Nginx site configuration..."
+run_and_log "Creating symlink for Nginx configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
 
 # Step 7.4: Install Certbot and obtain SSL certificates
+log "Installing Certbot..."
 run_and_log "Installing Certbot..." sudo apt-get install -y certbot python3-certbot-nginx
-run_and_log "Obtaining SSL certificates..." sudo certbot --nginx -d "$DOMAIN" --agree-tos --no-eff-email --email your-email@example.com
+log "Obtaining SSL certificates..."
+run_and_log "Obtaining SSL certificates for domain $DOMAIN..." sudo certbot --nginx -d "$DOMAIN" --agree-tos --no-eff-email --email your-email@example.com
 
-# Step 8: Restart Nginx to apply the configuration
+# Step 8: Test Nginx configuration for errors
+log "Testing Nginx configuration..."
+sudo nginx -t || exit 1
+
+# Step 9: Restart Nginx to apply the configuration
+log "Restarting Nginx..."
 run_and_log "Restarting Nginx..." sudo systemctl restart nginx
 
+# Final Message
 log "Nginx is set up with SSL/TLS, and the backup agent is running on https://$DOMAIN."
 log "Installation complete."
