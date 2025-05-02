@@ -1,10 +1,18 @@
 #!/bin/bash
 
 LOGFILE="/tmp/install_agent.log"
-CERT_DIR="/etc/backup-agent/certs"
 HOST_BACKUP_DIR="/var/backup_app/backups"
 CONTAINER_NAME="backup-agent"
 PORT=8080
+
+# Generate a random word and get the server IP dynamically
+SERVER_IP=$(curl -s http://icanhazip.com)  # Get the public IP address
+RANDOM_WORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 8)  # Generate a random 8-character string
+
+# Construct the dynamic domain name
+DOMAIN="${RANDOM_WORD}-${SERVER_IP}.sslip.io"
+
+log "Generated dynamic domain: $DOMAIN"
 
 # Log function
 log() {
@@ -23,7 +31,7 @@ run_and_log() {
 
 log "Starting installation..."
 
-# Check and install Docker
+# Step 1: Install Docker if not already installed
 if ! command -v docker &> /dev/null; then
     log "Docker not found. Installing..."
     run_and_log "Updating apt..." sudo apt-get update
@@ -37,44 +45,81 @@ else
     log "Docker already installed."
 fi
 
-# Test Docker
+# Step 2: Test Docker
 run_and_log "Checking Docker version..." sudo docker --version
 
-# Ensure backup directory exists
+# Step 3: Ensure backup directory exists
 log "Ensuring backup directory exists at $HOST_BACKUP_DIR"
 run_and_log "Creating backup dir..." sudo mkdir -p "$HOST_BACKUP_DIR"
 run_and_log "Setting permissions..." sudo chmod 755 "$HOST_BACKUP_DIR"
 
-# Generate self-signed certificate
-log "Generating self-signed certificate..."
-run_and_log "Creating cert dir..." sudo mkdir -p "$CERT_DIR"
-sudo openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
-    -keyout "$CERT_DIR/server.key" \
-    -out "$CERT_DIR/server.crt" \
-    -days 365 \
-    -subj "/CN=localhost" >> "$LOGFILE" 2>&1
-
-# Pull image
+# Step 4: Pull Docker image for the backup agent
 log "Pulling Docker image..."
 run_and_log "Pulling phantomfaith/backup-agent-api..." sudo docker pull phantomfaith/backup-agent-api:latest
 
-# Stop/remove any existing container
+# Step 5: Stop/remove any existing container
 if sudo docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     log "Stopping and removing existing container..."
     sudo docker stop "$CONTAINER_NAME" >> "$LOGFILE" 2>&1 || true
     sudo docker rm "$CONTAINER_NAME" >> "$LOGFILE" 2>&1 || true
 fi
 
-# Run container
+# Step 6: Run the Backup Agent container
 log "Starting Docker container with TLS..."
 run_and_log "Starting container..." sudo docker run -d \
     -p ${PORT}:${PORT} \
     -v /:/host:ro \
     -v "$HOST_BACKUP_DIR":/host/var/backup_app/backups \
-    -v "$CERT_DIR":/certs:ro \
     -e APP_KEY="$APP_KEY" \
     --name "$CONTAINER_NAME" \
     phantomfaith/backup-agent-api:latest
 
-log "Container is running on port ${PORT} (HTTPS)."
+# Step 7: Set up Nginx as a reverse proxy with SSL using Certbot
+log "Setting up Nginx reverse proxy..."
+
+# Step 7.1: Pull Nginx Docker image
+run_and_log "Pulling Nginx image..." sudo docker pull nginx:latest
+
+# Step 7.2: Create a Nginx configuration file for the reverse proxy
+cat <<EOF | sudo tee "$NGINX_CONF"
+server {
+    listen 80;
+    server_name $DOMAIN;
+
+    # Redirect HTTP to HTTPS
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
+    # Your SSL configuration (could be enhanced)
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384';
+
+    location / {
+        proxy_pass http://localhost:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+# Step 7.3: Create a symbolic link to enable Nginx config
+run_and_log "Enabling Nginx site configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
+
+# Step 7.4: Install Certbot and obtain SSL certificates
+run_and_log "Installing Certbot..." sudo apt-get install -y certbot python3-certbot-nginx
+run_and_log "Obtaining SSL certificates..." sudo certbot --nginx -d "$DOMAIN" --agree-tos --no-eff-email --email your-email@example.com
+
+# Step 8: Restart Nginx to apply the configuration
+run_and_log "Restarting Nginx..." sudo systemctl restart nginx
+
+log "Nginx is set up with SSL/TLS, and the backup agent is running on https://$DOMAIN."
 log "Installation complete."
