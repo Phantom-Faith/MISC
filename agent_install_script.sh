@@ -217,9 +217,20 @@ fi
 echo
 echo "=== Backup Agent Container ==="
 
+# Clean up any old failed containers
 if [ "$(docker ps -aq -f name=^/${CONTAINER_NAME}$)" ]; then
-    echo "✓ Container '${CONTAINER_NAME}' already exists"
-else
+    echo "Found existing container named '${CONTAINER_NAME}'. Checking status..."
+
+    if [ "$(docker inspect -f '{{.State.Running}}' ${CONTAINER_NAME})" = "true" ]; then
+        echo "✓ Container '${CONTAINER_NAME}' is already running"
+    else
+        echo "⚠️ Container exists but not running. Removing and restarting..."
+        docker rm -f "$CONTAINER_NAME"
+    fi
+fi
+
+# Run container if not already running
+if ! docker ps -q -f name=^/${CONTAINER_NAME}$ > /dev/null; then
     echo "Running container '${CONTAINER_NAME}' on port $PORT..."
     docker run -d \
         -p ${PORT}:${PORT} \
@@ -227,7 +238,15 @@ else
         -v "$HOST_BACKUP_DIR":/host/var/backup_app/backups \
         --name "$CONTAINER_NAME" \
         phantomfaith/backup-agent-api:latest
-    echo "✓ Container '${CONTAINER_NAME}' started"
+
+    if [ $? -eq 0 ]; then
+        echo "✓ Container '${CONTAINER_NAME}' started successfully"
+    else
+        echo "❌ Failed to start container '${CONTAINER_NAME}'. Please check Docker logs."
+        exit 1
+    fi
+else
+    echo "✓ Container '${CONTAINER_NAME}' is already running"
 fi
 
 echo
