@@ -1,107 +1,96 @@
 #!/bin/bash
 
+export DEBIAN_FRONTEND=noninteractive
+
 LOGFILE="/tmp/install_agent.log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
 HOST_BACKUP_DIR="/var/backup_app/backups"
 CONTAINER_NAME="backup-agent"
 PORT=8080
+EMAIL="phantomFaith4@gmail.com"
 
-# Generate a random word and get the server IP dynamically
-SERVER_IP=$(curl -s http://icanhazip.com)  # Get the public IP address
-RANDOM_WORD=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 8)  # Generate a random 8-character string
+echo "=== System Update ==="
+apt-get update -qq
+apt-get upgrade -y -qq
+echo "✓ System packages updated"
 
-# Construct the dynamic domain name
-DOMAIN="${RANDOM_WORD}-${SERVER_IP}.sslip.io"
-
-log "Generated dynamic domain: $DOMAIN"
-
-# Log function
-log() {
-    echo "$(date) - $1" | tee -a "$LOGFILE"
+get_server_ip() {
+    ip=$(hostname -I | awk '{print $1}')
+    echo "$ip"
 }
 
-run_and_log() {
-    log "$1"
-    shift
-    "$@" >> "$LOGFILE" 2>&1
-    if [ $? -ne 0 ]; then
-        log "Error: Command failed - $*"
-        exit 1
+domain="agent.$(get_server_ip).sslip.io"
+
+detect_web_server() {
+    is_service_active() {
+        systemctl is-active --quiet "$1"
+    }
+
+    if (command -v apache2 >/dev/null 2>&1 || command -v httpd >/dev/null 2>&1) && \
+       (is_service_active apache2 || is_service_active httpd || pgrep -x apache2 >/dev/null || pgrep -x httpd >/dev/null); then
+        echo "apache"
+    elif command -v nginx >/dev/null 2>&1 && \
+         (is_service_active nginx || pgrep -x nginx >/dev/null); then
+        echo "nginx"
+    elif command -v caddy >/dev/null 2>&1 && \
+         (is_service_active caddy || pgrep -x caddy >/dev/null); then
+        echo "caddy"
+    else
+        echo "none"
     fi
 }
 
-log "Starting installation..."
-
-# Step 1: Install Docker if not already installed
-if ! command -v docker &> /dev/null; then
-    log "Docker not found. Installing..."
-    run_and_log "Updating apt..." sudo apt-get update
-    run_and_log "Installing dependencies..." sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-    run_and_log "Adding Docker GPG key..." curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-    run_and_log "Adding Docker repo..." sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-    run_and_log "Installing Docker..." sudo apt-get update && sudo apt-get install -y docker-ce
-    run_and_log "Starting Docker..." sudo systemctl start docker
-    run_and_log "Enabling Docker on boot..." sudo systemctl enable docker
-else
-    log "Docker already installed."
-fi
-
-# Step 2: Test Docker
-run_and_log "Checking Docker version..." sudo docker --version
-
-# Step 3: Ensure backup directory exists
-log "Ensuring backup directory exists at $HOST_BACKUP_DIR"
-run_and_log "Creating backup dir..." sudo mkdir -p "$HOST_BACKUP_DIR"
-run_and_log "Setting permissions..." sudo chmod 755 "$HOST_BACKUP_DIR"
-
-# Step 4: Pull Docker image for the backup agent
-log "Pulling Docker image..."
-run_and_log "Pulling phantomfaith/backup-agent-api..." sudo docker pull phantomfaith/backup-agent-api:latest
-
-# Step 5: Stop/remove any existing container
-if sudo docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    log "Stopping and removing existing container..."
-    sudo docker stop "$CONTAINER_NAME" >> "$LOGFILE" 2>&1 || true
-    sudo docker rm "$CONTAINER_NAME" >> "$LOGFILE" 2>&1 || true
-fi
-
-# Step 6: Run the Backup Agent container
-log "Starting Docker container with TLS..."
-run_and_log "Starting container..." sudo docker run -d \
-    -p ${PORT}:${PORT} \
-    -v /:/host:ro \
-    -v "$HOST_BACKUP_DIR":/host/var/backup_app/backups \
-    -e APP_KEY="$APP_KEY" \
-    --name "$CONTAINER_NAME" \
-    phantomfaith/backup-agent-api:latest
-
-# Step 7: Set up Nginx as a reverse proxy with SSL using Certbot
-log "Setting up Nginx reverse proxy..."
-
-# Step 7.1: Pull Nginx Docker image
-run_and_log "Pulling Nginx image..." sudo docker pull nginx:latest
-
-# Step 7.2: Create a Nginx configuration file for the reverse proxy
-NGINX_CONF="/etc/nginx/sites-available/backup-api"
-
-cat <<EOF | sudo tee "$NGINX_CONF"
-server {
-    listen 80;
-    server_name $DOMAIN;
-
-    # Redirect HTTP to HTTPS
-    return 301 https://\$host\$request_uri;
+install_certbot() {
+    apt-get install -y -qq certbot python3-certbot-apache python3-certbot-nginx
+    echo "✓ Certbot installed"
 }
 
+get_cert_apache() {
+    echo "Obtaining SSL certificate for $domain with Apache..."
+    certbot --apache -d "$domain" --non-interactive --agree-tos --email "$EMAIL"
+    echo "✓ SSL certificate obtained via Apache"
+}
+
+append_apache_conf() {
+    local file="/etc/apache2/sites-available/agent.conf"
+    cat <<EOF > "$file"
+<VirtualHost *:80>
+    ServerName $domain
+    ProxyPreserveHost On
+    ProxyPass / http://localhost:$PORT/
+    ProxyPassReverse / http://localhost:$PORT/
+    ErrorLog \${APACHE_LOG_DIR}/$domain-error.log
+    CustomLog \${APACHE_LOG_DIR}/$domain-access.log combined
+</VirtualHost>
+EOF
+
+    a2enmod proxy proxy_http ssl headers rewrite > /dev/null 2>&1 || true
+    a2ensite agent.conf > /dev/null 2>&1
+    systemctl reload apache2 || systemctl restart apache2
+    echo "✓ Apache site configured for $domain"
+}
+
+append_nginx_conf() {
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+    echo "Stopping potential port 80 conflicts..."
+    systemctl stop apache2 2>/dev/null || true
+    systemctl disable apache2 2>/dev/null || true
+    systemctl stop httpd 2>/dev/null || true
+    systemctl disable httpd 2>/dev/null || true
+    pkill -f apache2 || true
+    pkill -f httpd || true
+
+    echo "Killing any process using port 80..."
+    fuser -k 80/tcp || true
+
+    echo "Writing Nginx config..."
+    local file="/etc/nginx/sites-available/agent.conf"
+    cat <<EOF > "$file"
 server {
-    listen 443 ssl;
-    server_name $DOMAIN;
-
-    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
-
-    # SSL configuration (could be enhanced)
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384';
+    listen 80;
+    server_name $domain;
 
     location / {
         proxy_pass http://localhost:$PORT;
@@ -110,31 +99,136 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 }
 EOF
 
-# Step 7.3: Check if symlink already exists before creating it
-if [ ! -L "/etc/nginx/sites-enabled/backup-api" ]; then
-    log "Creating symlink for Nginx configuration..."
-    run_and_log "Creating symlink for Nginx configuration..." sudo ln -s "$NGINX_CONF" /etc/nginx/sites-enabled/
+    ln -sf "$file" /etc/nginx/sites-enabled/agent.conf
+
+    echo "Starting Nginx..."
+    systemctl daemon-reexec
+    systemctl restart nginx || journalctl -xeu nginx
+    echo "✓ Nginx site configured for $domain"
+}
+
+get_cert_nginx() {
+    echo "Obtaining SSL certificate for $domain with Nginx..."
+    certbot --nginx -d "$domain" --non-interactive --agree-tos --email "$EMAIL"
+    echo "✓ SSL certificate obtained via Nginx"
+}
+
+install_caddy() {
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl gnupg2
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+    apt-get update -qq
+    apt-get install -y -qq caddy
+    echo "✓ Caddy installed"
+}
+
+append_caddyfile() {
+    local file="/etc/caddy/Caddyfile"
+    cat <<EOF > "$file"
+$domain {
+    reverse_proxy localhost:$PORT
+}
+EOF
+    systemctl enable caddy > /dev/null 2>&1
+    systemctl restart caddy
+    echo "✓ Caddy config applied for $domain"
+}
+
+install_certbot_if_needed() {
+    if ! command -v certbot > /dev/null 2>&1; then
+        install_certbot
+    fi
+}
+
+install_proxy_server() {
+    server=$(detect_web_server)
+
+    case "$server" in
+        apache)
+            echo "Apache detected"
+            append_apache_conf
+            install_certbot_if_needed
+            get_cert_apache
+            ;;
+        nginx)
+            echo "Nginx detected"
+            append_nginx_conf
+            install_certbot_if_needed
+            get_cert_nginx
+            ;;
+        caddy)
+            echo "Caddy detected"
+            append_caddyfile
+            ;;
+        *)
+            echo "No known web server found, installing Caddy"
+            install_caddy
+            append_caddyfile
+            ;;
+    esac
+}
+
+install_proxy_server
+
+echo
+echo "=== Docker Check ==="
+
+install_docker_fallback() {
+    echo "Installing Docker using fallback method (docker.io)..."
+    apt-get install -y -qq docker.io
+    systemctl enable docker > /dev/null 2>&1
+    systemctl start docker > /dev/null 2>&1
+    echo "✓ Docker installed via fallback"
+}
+
+if ! command -v docker > /dev/null 2>&1; then
+    echo "Installing Docker..."
+
+    apt-get install -y -qq ca-certificates curl gnupg
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+
+    codename=$(lsb_release -cs)
+
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $codename stable" | tee /etc/apt/sources.list.d/docker.list >/dev/null
+
+    apt-get update -qq
+
+    if apt-cache policy docker-ce | grep -q 'Candidate: (none)'; then
+        install_docker_fallback
+    else
+        apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        echo "✓ Docker installed"
+    fi
 else
-    log "Symlink for Nginx configuration already exists."
+    echo "✓ Docker already installed on system"
 fi
 
-# Step 7.4: Install Certbot and obtain SSL certificates
-log "Installing Certbot..."
-run_and_log "Installing Certbot..." sudo apt-get install -y certbot python3-certbot-nginx
-log "Obtaining SSL certificates..."
-run_and_log "Obtaining SSL certificates for domain $DOMAIN..." sudo certbot --nginx -d "$DOMAIN" --agree-tos --no-eff-email --email your-email@example.com
+echo
+echo "=== Backup Agent Container ==="
 
-# Step 8: Test Nginx configuration for errors
-log "Testing Nginx configuration..."
-sudo nginx -t || exit 1
+if [ "$(docker ps -aq -f name=^/${CONTAINER_NAME}$)" ]; then
+    echo "✓ Container '${CONTAINER_NAME}' already exists"
+else
+    echo "Running container '${CONTAINER_NAME}' on port $PORT..."
+    docker run -d \
+        -p ${PORT}:${PORT} \
+        -v /:/host:ro \
+        -v "$HOST_BACKUP_DIR":/host/var/backup_app/backups \
+        --name "$CONTAINER_NAME" \
+        phantomfaith/backup-agent-api:latest
+    echo "✓ Container '${CONTAINER_NAME}' started"
+fi
 
-# Step 9: Restart Nginx to apply the configuration
-log "Restarting Nginx..."
-run_and_log "Restarting Nginx..." sudo systemctl restart nginx
-
-# Final Message
-log "Nginx is set up with SSL/TLS, and the backup agent is running on https://$DOMAIN."
-log "Installation complete."
+echo
+echo "=== Script Complete ==="
