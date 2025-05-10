@@ -57,11 +57,17 @@ append_apache_conf() {
     cat <<EOF > "$file"
 <VirtualHost *:80>
     ServerName $domain
+
     ProxyPreserveHost On
+
+    ProxyPass /ws/ ws://localhost:$PORT/
+    ProxyPassReverse /ws/ ws://localhost:$PORT/
+
     ProxyPass / http://localhost:$PORT/
     ProxyPassReverse / http://localhost:$PORT/
-    ErrorLog \${APACHE_LOG_DIR}/$domain-error.log
-    CustomLog \${APACHE_LOG_DIR}/$domain-access.log combined
+
+    ErrorLog ${APACHE_LOG_DIR}/$domain-error.log
+    CustomLog ${APACHE_LOG_DIR}/$domain-access.log combined
 </VirtualHost>
 EOF
 
@@ -98,6 +104,10 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
     }
 
     location /.well-known/acme-challenge/ {
