@@ -14,6 +14,16 @@ else
   echo "[*] Docker already installed."
 fi
 
+echo "[*] Checking restic installation..."
+
+if ! command -v restic >/dev/null 2>&1; then
+  echo "[*] Restic not found. Installing restic..."
+  curl -s https://restic.net/scripts/install-restic.sh | sudo bash
+  echo "[*] Restic installed."
+else
+  echo "[*] Restic already installed."
+fi
+
 echo "[*] Creating agent directory at $AGENT_DIR..."
 mkdir -p "$AGENT_DIR"
 
