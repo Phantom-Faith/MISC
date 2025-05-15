@@ -1,33 +1,38 @@
 #!/bin/bash
-
 set -e
 
-echo "[*] Installing dependencies"
-apt update && apt install -y restic
+AGENT_DIR="/var/www/backup-agent"
+CONFIG_JSON="$1"
 
-echo "[*] Deploying agent"
-cp /tmp/agent_binary /usr/local/bin/backup-agent
-chmod +x /usr/local/bin/backup-agent
-cp /tmp/config.json /etc/backup-agent.json
+echo "[*] Checking Docker installation..."
 
-echo "[*] Creating systemd service"
-cat <<EOF >/etc/systemd/system/backup-agent.service
-[Unit]
-Description=Backup Agent
-After=network.target
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[*] Docker not found. Installing Docker..."
+  curl -fsSL https://get.docker.com | sh
+  echo "[*] Docker installed."
+else
+  echo "[*] Docker already installed."
+fi
 
-[Service]
-ExecStart=/usr/local/bin/backup-agent --config /etc/backup-agent.json
-Restart=always
+echo "[*] Creating agent directory at $AGENT_DIR..."
+mkdir -p "$AGENT_DIR"
 
-[Install]
-WantedBy=multi-user.target
-EOF
+echo "[*] Writing config.json..."
+echo "$CONFIG_JSON" > "$AGENT_DIR/config.json"
 
-echo "[*] Enabling and starting agent"
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl enable backup-agent
-systemctl start backup-agent
+echo "[*] Pulling agent Docker image..."
+docker pull phantomfaith/re-agent:latest
 
-echo "[+] Agent installed and started successfully"
+echo "[*] Stopping existing agent container if running..."
+docker rm -f backup-agent || true
+
+echo "[*] Starting agent container..."
+docker run -d \
+  --name backup-agent \
+  --restart always \
+  -v "$AGENT_DIR:/data" \
+  -v /:/host:ro \
+  -p 8080:8080 \
+  phantomfaith/re-agent:latest
+
+echo "[+] Backup agent installed and running on port 8080."
