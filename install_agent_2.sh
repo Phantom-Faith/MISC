@@ -42,6 +42,7 @@ docker run -d \
   --restart always \
   -v "$AGENT_DIR:/data" \
   -v /:/host:ro \
+  -v /usr/bin:/usr/bin:ro \
   -p 8080:8080 \
   phantomfaith/re-agent:latest
 
