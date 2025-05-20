@@ -18,10 +18,10 @@ docker pull yourdockeruser/agent:latest
 
 echo "Running agent container..."
 docker run -d \
-  --name agent \
+  --name re-agent \
   --restart unless-stopped \
   -v /:/host \
   -p 8081:8080 \
-  yourdockeruser/agent:latest
+  phantomfaith/re-agent:latest
 
 echo "Agent installed and running."
