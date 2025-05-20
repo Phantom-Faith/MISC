@@ -5,7 +5,7 @@ set -e
 echo "Updating system..."
 apt update && apt upgrade -y
 
-echo "Installing required packages..."
+echo "Installing required packages (curl, docker.io, restic)..."
 apt install -y curl docker.io restic
 
 echo "Pulling agent image..."
