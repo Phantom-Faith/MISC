@@ -14,7 +14,7 @@ then
 fi
 
 echo "Pulling agent image..."
-docker pull yourdockeruser/agent:latest
+docker pull phantomfaith/re-agent:latest
 
 echo "Running agent container..."
 docker run -d \
