@@ -47,7 +47,7 @@ docker run -d \
   --restart unless-stopped \
   -v /:/host \
   -v /usr/bin/restic:/usr/bin/restic:ro \
-  -p 8081:8080 \
+  -p 8080:8080 \
   phantomfaith/re-agent:latest
 
 echo "✅ Agent installed and running."
