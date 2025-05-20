@@ -1,11 +1,12 @@
 #!/bin/bash
+
 set -e
 
 echo "Updating system..."
 apt update && apt upgrade -y
 
 echo "Installing required packages..."
-apt install -y restic docker.io curl
+apt install -y curl docker.io restic
 
 echo "Pulling agent image..."
 docker pull phantomfaith/re-agent:latest
